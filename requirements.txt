@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-multipart
+markitdown
+python-pptx
+pillow
+jinja2
+openpyxl
+pandas

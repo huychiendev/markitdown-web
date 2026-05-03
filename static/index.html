@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MarkItDown Pro - Web UI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+            color: #f8fafc;
+            min-height: 100vh;
+        }
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+        .drag-active {
+            border-color: #8b5cf6 !important;
+            background: rgba(139, 92, 246, 0.1) !important;
+        }
+        .markdown-body {
+            color: #e2e8f0;
+            line-height: 1.6;
+        }
+        .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+            color: #f8fafc;
+            margin-top: 1.5em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+        }
+        .markdown-body h1 { font-size: 2em; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 0.3em; }
+        .markdown-body h2 { font-size: 1.5em; }
+        .markdown-body a { color: #a78bfa; text-decoration: none; }
+        .markdown-body img { max-width: 100%; border-radius: 8px; margin: 1em 0; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .markdown-body pre { background: #0f172a; padding: 1em; border-radius: 8px; overflow-x: auto; border: 1px solid rgba(255,255,255,0.05); }
+        .markdown-body code { font-family: monospace; background: rgba(255,255,255,0.1); padding: 0.2em 0.4em; border-radius: 4px; font-size: 0.9em; }
+        .markdown-body pre code { background: transparent; padding: 0; }
+        .markdown-body blockquote { border-left: 4px solid #8b5cf6; margin: 0; padding-left: 1em; color: #cbd5e1; }
+        .markdown-body table { width: 100%; border-collapse: collapse; margin: 1em 0; }
+        .markdown-body th, .markdown-body td { border: 1px solid rgba(255,255,255,0.1); padding: 0.5em; text-align: left; }
+        .markdown-body th { background: rgba(255,255,255,0.05); }
+        
+        .loader {
+            border: 3px solid rgba(255,255,255,0.1);
+            border-top-color: #8b5cf6;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: rgba(0,0,0,0.1); }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
+    </style>
+</head>
+<body class="p-4 md:p-8 flex flex-col h-screen">
+    
+    <div class="w-full h-full flex flex-col">
+        <header class="flex justify-between items-center mb-8">
+            <div class="flex items-center gap-3">
+                <div class="p-2 bg-gradient-to-br from-violet-600 to-indigo-600 rounded-lg shadow-lg">
+                    <i data-lucide="file-type-2" class="text-white w-6 h-6"></i>
+                </div>
+                <div>
+                    <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-violet-400 to-indigo-400">MarkItDown Pro</h1>
+                    <p class="text-sm text-slate-400">Convert Any Document to Markdown (PPTX Image Support)</p>
+                </div>
+            </div>
+            <div>
+                <span id="progressBadge" class="hidden px-3 py-1 text-xs font-medium bg-violet-500/20 text-violet-400 border border-violet-500/30 rounded-full items-center gap-2">
+                    <div class="loader w-3 h-3 border-2 border-violet-400 border-t-transparent" style="width: 12px; height: 12px; border-width: 2px;"></div>
+                    <span id="progressText">Đang xử lý...</span>
+                </span>
+            </div>
+        </header>
+
+        <!-- Compact Unified Top Bar -->
+        <div class="glass-panel rounded-2xl p-4 mb-6 flex flex-col sm:flex-row justify-between items-center gap-4 border-dashed border-2 border-slate-600 transition-all relative overflow-hidden" id="dropzone">
+            <input type="file" id="fileInput" class="hidden" accept=".pptx,.docx,.xlsx,.pdf,.html,.csv,.json,.xml">
+            <input type="file" id="folderInput" class="hidden" webkitdirectory directory multiple>
+            
+            <div class="flex items-center gap-4 w-full" id="uploadState">
+                <div class="bg-slate-800/80 p-3 rounded-xl transition-transform" id="stateIcon">
+                    <i data-lucide="upload-cloud" class="w-6 h-6 text-violet-400"></i>
+                </div>
+                <div class="flex-1">
+                    <h3 class="text-lg font-semibold" id="stateTitle">Tải lên (Upload)</h3>
+                    <p class="text-slate-400 text-sm" id="stateDesc">Kéo thả file vào đây. Hỗ trợ PPTX (có ảnh), Excel, Word, PDF...</p>
+                </div>
+            </div>
+
+            <div class="flex gap-2">
+                <button id="btnSelectFolder" onclick="document.getElementById('folderInput').click()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white font-medium rounded-xl shadow-lg transition-colors whitespace-nowrap flex items-center gap-2 border border-slate-600">
+                    <i data-lucide="folder-up" class="w-4 h-4"></i> Thư Mục
+                </button>
+                <button id="btnSelectFile" onclick="document.getElementById('fileInput').click()" class="px-6 py-2 bg-violet-600 hover:bg-violet-500 text-white font-medium rounded-xl shadow-lg shadow-violet-900/20 transition-colors whitespace-nowrap">
+                    Chọn File
+                </button>
+            </div>
+        </div>
+
+    <main class="flex-1 flex flex-col min-h-0">
+        <!-- Result Section -->
+        <div class="w-full h-full glass-panel rounded-2xl flex flex-col overflow-hidden relative">
+            <div class="border-b border-slate-700/50 p-4 flex justify-between items-center bg-slate-900/40">
+                <div class="flex gap-4">
+                    <button id="btnPreview" class="text-sm font-medium text-violet-400 pb-1 border-b-2 border-violet-500 transition-colors">Preview</button>
+                    <button id="btnCode" class="text-sm font-medium text-slate-400 pb-1 border-b-2 border-transparent hover:text-slate-200 transition-colors">Markdown Code</button>
+                </div>
+                <div class="flex gap-2">
+                    <button id="btnCopy" class="flex items-center gap-2 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded-lg text-sm transition-colors disabled:opacity-50" disabled>
+                        <i data-lucide="copy" class="w-4 h-4"></i> Copy
+                    </button>
+                    <a id="btnDownload" class="flex items-center gap-2 px-3 py-1.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-sm transition-colors disabled:opacity-50 pointer-events-none opacity-50" download>
+                        <i data-lucide="download" class="w-4 h-4"></i> Download .md
+                    </a>
+                </div>
+            </div>
+            <div class="flex-1 flex overflow-hidden relative">
+                <!-- Sidebar for Batch Files (Hidden by default) -->
+                <div id="fileSidebar" class="w-64 border-r border-slate-700/50 bg-slate-900/20 overflow-y-auto hidden flex-col">
+                    <div class="p-3 border-b border-slate-700/50 text-xs font-semibold text-slate-400 uppercase tracking-wider">Danh sách File</div>
+                    <div id="fileList" class="flex flex-col p-2 gap-1">
+                        <!-- File items will be inserted here -->
+                    </div>
+                </div>
+
+                <div class="flex-1 overflow-auto p-6 relative">
+                    <!-- Empty State -->
+                    <div id="emptyState" class="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
+                        <i data-lucide="file-code" class="w-16 h-16 mb-4 opacity-50"></i>
+                        <p>Kéo thả file/thư mục vào bất kỳ đâu để bắt đầu</p>
+                    </div>
+
+                    <!-- Content areas -->
+                    <div id="previewArea" class="markdown-body hidden w-full h-full"></div>
+                    <textarea id="codeArea" class="w-full h-full bg-transparent border-none resize-none focus:ring-0 text-sm font-mono text-slate-300 hidden" readonly></textarea>
+                </div>
+            </div>
+        </div>
+    </main>
+    </div>
+
+    <script>
+        lucide.createIcons();
+
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('fileInput');
+        const folderInput = document.getElementById('folderInput');
+        
+        const stateIcon = document.getElementById('stateIcon');
+        const stateTitle = document.getElementById('stateTitle');
+        const stateDesc = document.getElementById('stateDesc');
+        const btnSelectFile = document.getElementById('btnSelectFile');
+        const btnSelectFolder = document.getElementById('btnSelectFolder');
+        
+        const btnPreview = document.getElementById('btnPreview');
+        const btnCode = document.getElementById('btnCode');
+        const previewArea = document.getElementById('previewArea');
+        const codeArea = document.getElementById('codeArea');
+        const emptyState = document.getElementById('emptyState');
+        
+        const btnCopy = document.getElementById('btnCopy');
+        const btnDownload = document.getElementById('btnDownload');
+        
+        const fileSidebar = document.getElementById('fileSidebar');
+        const fileList = document.getElementById('fileList');
+        
+        const progressBadge = document.getElementById('progressBadge');
+        const progressText = document.getElementById('progressText');
+
+        let currentMarkdown = '';
+        let currentResults = [];
+
+        // UI Toggles
+        btnPreview.addEventListener('click', () => {
+            btnPreview.classList.replace('text-slate-400', 'text-violet-400');
+            btnPreview.classList.replace('border-transparent', 'border-violet-500');
+            btnCode.classList.replace('text-violet-400', 'text-slate-400');
+            btnCode.classList.replace('border-violet-500', 'border-transparent');
+            previewArea.classList.remove('hidden');
+            codeArea.classList.add('hidden');
+        });
+
+        btnCode.addEventListener('click', () => {
+            btnCode.classList.replace('text-slate-400', 'text-violet-400');
+            btnCode.classList.replace('border-transparent', 'border-violet-500');
+            btnPreview.classList.replace('text-violet-400', 'text-slate-400');
+            btnPreview.classList.replace('border-violet-500', 'border-transparent');
+            codeArea.classList.remove('hidden');
+            previewArea.classList.add('hidden');
+        });
+
+        // Copy functionality
+        btnCopy.addEventListener('click', () => {
+            navigator.clipboard.writeText(currentMarkdown);
+            const originalHtml = btnCopy.innerHTML;
+            btnCopy.innerHTML = '<i data-lucide="check" class="w-4 h-4 text-green-400"></i> Copied!';
+            lucide.createIcons();
+            setTimeout(() => {
+                btnCopy.innerHTML = originalHtml;
+                lucide.createIcons();
+            }, 2000);
+        });
+
+        // Drag and drop setup - Global
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            document.body.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            document.body.addEventListener(eventName, () => {
+                dropzone.classList.add('drag-active', 'scale-[1.02]');
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            document.body.addEventListener(eventName, () => {
+                dropzone.classList.remove('drag-active', 'scale-[1.02]');
+            }, false);
+        });
+
+        document.body.addEventListener('drop', async (e) => {
+            const items = e.dataTransfer.items;
+            if (items && items.length) {
+                try {
+                    const files = await getFilesFromDataTransferItems(items);
+                    if (files.length > 0) {
+                        handleFiles(files, files.length > 1);
+                    }
+                } catch (err) {
+                    console.error("Error parsing dropped folder", err);
+                }
+            } else {
+                // Fallback
+                const files = Array.from(e.dataTransfer.files);
+                if (files.length) handleFiles(files, files.length > 1);
+            }
+        });
+
+        async function getFilesFromDataTransferItems(items) {
+            const files = [];
+            async function traverseFileTree(item) {
+                if (!item) return;
+                if (item.isFile) {
+                    const file = await new Promise((resolve) => item.file(resolve));
+                    files.push(file);
+                } else if (item.isDirectory) {
+                    const dirReader = item.createReader();
+                    const entries = await new Promise((resolve) => {
+                        // readEntries might not read everything if there are >100 files, but sufficient for most cases
+                        dirReader.readEntries(resolve);
+                    });
+                    for (let i = 0; i < entries.length; i++) {
+                        await traverseFileTree(entries[i]);
+                    }
+                }
+            }
+
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i].webkitGetAsEntry();
+                if (item) {
+                    await traverseFileTree(item);
+                }
+            }
+            return files;
+        }
+
+        fileInput.addEventListener('change', function() {
+            if (this.files.length) handleFiles([this.files[0]], false);
+        });
+        
+        folderInput.addEventListener('change', function() {
+            if (this.files.length) {
+                const files = Array.from(this.files);
+                handleFiles(files, true);
+            }
+        });
+        
+        function renderContent(markdown) {
+            currentMarkdown = markdown;
+            codeArea.value = currentMarkdown;
+            previewArea.innerHTML = marked.parse(currentMarkdown);
+        }
+        
+        function selectFile(index) {
+            // Update active state in sidebar
+            document.querySelectorAll('.file-item').forEach((el, i) => {
+                if (i === index) {
+                    el.classList.add('bg-violet-600/30', 'border-violet-500');
+                    el.classList.remove('border-transparent', 'hover:bg-slate-800/50');
+                } else {
+                    el.classList.remove('bg-violet-600/30', 'border-violet-500');
+                    el.classList.add('border-transparent', 'hover:bg-slate-800/50');
+                }
+            });
+            renderContent(currentResults[index].markdown);
+        }
+
+        async function handleFiles(files, isBatch) {
+            // UI Update for loading
+            stateIcon.innerHTML = '<div class="loader"></div>';
+            stateTitle.textContent = 'Đang xử lý...';
+            stateTitle.className = 'text-lg font-semibold text-violet-400';
+            stateDesc.textContent = isBatch 
+                ? `Đang tải & xử lý ${files.length} files. Vui lòng đợi...` 
+                : `Đang tải & chuyển đổi ${files[0].name}. Vui lòng đợi...`;
+            
+            dropzone.classList.add('pointer-events-none', 'opacity-80');
+            
+            progressBadge.classList.remove('hidden');
+            progressText.textContent = isBatch ? `Đang nén & xử lý ${files.length} files...` : `Đang xử lý ${files[0].name}...`;
+            
+            emptyState.classList.add('hidden');
+            previewArea.classList.add('hidden');
+            codeArea.classList.add('hidden');
+            fileSidebar.classList.add('hidden');
+            btnCopy.disabled = true;
+            btnDownload.classList.add('pointer-events-none', 'opacity-50');
+
+            const formData = new FormData();
+            files.forEach(f => formData.append(isBatch ? 'files' : 'file', f));
+            
+            const endpoint = isBatch ? '/api/convert_batch' : '/api/convert';
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    progressBadge.classList.add('hidden');
+                    
+                    // Render UI
+                    stateIcon.innerHTML = '<i data-lucide="check-circle" class="w-6 h-6 text-green-500"></i>';
+                    stateTitle.textContent = 'Thành công!';
+                    stateTitle.className = 'text-lg font-semibold text-green-400';
+                    stateDesc.textContent = isBatch 
+                        ? `Đã xử lý ${files.length} files. Bạn có thể xem từng file ở cột trái.`
+                        : `Đã hoàn tất chuyển đổi: ${files[0].name}`;
+                    dropzone.classList.remove('pointer-events-none', 'opacity-80');
+                    lucide.createIcons();
+
+                    if (isBatch && data.results && data.results.length > 0) {
+                        currentResults = data.results;
+                        fileSidebar.classList.remove('hidden');
+                        fileList.innerHTML = '';
+                        currentResults.forEach((res, idx) => {
+                            const div = document.createElement('div');
+                            div.className = 'file-item cursor-pointer p-2 rounded-lg text-sm truncate border transition-colors border-transparent hover:bg-slate-800/50';
+                            div.title = res.filename;
+                            div.textContent = res.filename;
+                            div.onclick = () => selectFile(idx);
+                            fileList.appendChild(div);
+                        });
+                        selectFile(0);
+                    } else {
+                        renderContent(data.markdown);
+                    }
+                    
+                    // Show current active tab
+                    if (btnPreview.classList.contains('text-violet-400')) {
+                        previewArea.classList.remove('hidden');
+                    } else {
+                        codeArea.classList.remove('hidden');
+                    }
+
+                    // Enable buttons
+                    btnCopy.disabled = false;
+                    btnDownload.href = data.download_url;
+                    btnDownload.classList.remove('pointer-events-none', 'opacity-50');
+                    btnDownload.innerHTML = isBatch 
+                        ? '<i data-lucide="folder-down" class="w-4 h-4 inline mr-1"></i> Download All (ZIP)'
+                        : '<i data-lucide="download" class="w-4 h-4 inline mr-1"></i> Download .md';
+                    lucide.createIcons();
+
+                } else {
+                    throw new Error(data.error || 'Unknown error');
+                }
+            } catch (error) {
+                progressBadge.classList.add('hidden');
+                stateIcon.innerHTML = '<i data-lucide="alert-circle" class="w-6 h-6 text-red-500"></i>';
+                stateTitle.textContent = 'Lỗi!';
+                stateTitle.className = 'text-lg font-semibold text-red-400';
+                stateDesc.textContent = error.message;
+                dropzone.classList.remove('pointer-events-none', 'opacity-80');
+                lucide.createIcons();
+            }
+        }
+    </script>
+</body>
+</html>
