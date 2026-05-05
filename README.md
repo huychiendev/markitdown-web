@@ -2,14 +2,16 @@
 
 ## Giới thiệu
 
-Ứng dụng `MarkItDown Web UI` là một wrapper web gọn nhẹ dành cho thư viện `markitdown` của Microsoft. Ứng dụng giải quyết triệt để hạn chế của `markitdown` nguyên bản khi chuyển đổi file PPTX (chỉ trích xuất text, mất ảnh), bằng cách tự động can thiệp vào mã nguồn file để trích xuất ảnh và chèn lại link hình ảnh vào mã Markdown.
+Ứng dụng `MarkItDown Web UI` là một wrapper web gọn nhẹ dành cho thư viện `markitdown` của Microsoft. Ứng dụng giải quyết triệt để các hạn chế của `markitdown` nguyên bản:
+- **PPTX**: Trích xuất ảnh và chèn lại link hình ảnh vào Markdown (markitdown gốc mất ảnh).
+- **Excel (.xlsx)**: Trích xuất cả giá trị lẫn công thức gốc. Hiển thị dạng `value (=FORMULA)` thay vì chỉ giá trị.
 
 ## Cấu trúc thư mục
 
 - `/app.py`:
   - **Backend API (FastAPI)**. Điểm khởi đầu của ứng dụng.
   - Chứa route `/` để trả về giao diện frontend.
-  - Chứa route `/api/convert` thực hiện logic nhận file upload, gọi `markitdown`, extract ảnh bằng `python-pptx` và trả về kết quả.
+  - Chứa route `/api/convert` và `/api/convert_batch`: nhận file upload, xử lý convert. File `.xlsx` dùng `openpyxl` trực tiếp (hỗ trợ formula), các file khác dùng `markitdown`.
 
 - `/static/index.html`:
   - **Frontend UI**.
