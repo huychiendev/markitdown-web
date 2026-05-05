@@ -200,25 +200,46 @@ async def convert_file(file: UploadFile = File(...)):
         if file.filename.lower().endswith('.pptx'):
             try:
                 prs = Presentation(file_path)
+                img_counter = {}
                 for slide in prs.slides:
-                    for shape in slide.shapes:
-                        if hasattr(shape, "image"):
-                            safe_name = shape.name.replace(" ", "")
+                    # Match MarkItDown's exact sort order: (top, left)
+                    sorted_shapes = sorted(
+                        slide.shapes,
+                        key=lambda s: (
+                            float("-inf") if not s.top else s.top,
+                            float("-inf") if not s.left else s.left,
+                        ),
+                    )
+                    for shape in sorted_shapes:
+                        if not (shape.shape_type == 13 or (shape.shape_type == 14 and hasattr(shape, "image"))):
+                            continue
+                        try:
+                            blob = shape.image.blob
                             ext = shape.image.ext
-                            img_filename = f"{safe_name}.{ext}"
-                            img_path = os.path.join(job_dir, img_filename)
-                            
-                            # Save the image blob
-                            with open(img_path, "wb") as img_f:
-                                img_f.write(shape.image.blob)
-                            
-                            # URL encode the filename for markdown to handle spaces properly
-                            encoded_filename = urllib.parse.quote(img_filename)
-                            # Regex replace the image tag in markdown
-                            pattern = rf"\]\({safe_name}\.[a-zA-Z]+\)"
-                            replacement = f"](/static/conversions/{job_id}/{encoded_filename})"
-                            markdown_text = re.sub(pattern, replacement, markdown_text, flags=re.IGNORECASE)
-                            
+                        except Exception:
+                            continue
+
+                        # MarkItDown uses: re.sub(r"\W", "", shape.name) + ".jpg"
+                        placeholder_name = re.sub(r"\W", "", shape.name)
+                        placeholder = f"{placeholder_name}.jpg"
+
+                        # Handle duplicate shape names: add counter suffix for file saving
+                        count = img_counter.get(placeholder_name, 0)
+                        img_counter[placeholder_name] = count + 1
+                        save_name = f"{placeholder_name}_{count}.{ext}" if count > 0 else f"{placeholder_name}.{ext}"
+
+                        img_path = os.path.join(job_dir, save_name)
+                        with open(img_path, "wb") as img_f:
+                            img_f.write(blob)
+
+                        encoded_filename = urllib.parse.quote(save_name)
+                        img_url = f"/static/conversions/{job_id}/{encoded_filename}"
+
+                        # Replace only the FIRST occurrence to preserve correct position order
+                        old_ref = f"]({placeholder})"
+                        new_ref = f"]({img_url})"
+                        markdown_text = markdown_text.replace(old_ref, new_ref, 1)
+
             except Exception as e:
                 print(f"Error extracting PPTX images: {e}")
 
@@ -271,22 +292,43 @@ async def convert_batch(files: List[UploadFile] = File(...)):
                 if file.filename.lower().endswith('.pptx'):
                     try:
                         prs = Presentation(file_path)
+                        file_prefix = os.path.splitext(file.filename)[0]
+                        img_counter = {}
                         for slide in prs.slides:
-                            for shape in slide.shapes:
-                                if hasattr(shape, "image"):
-                                    safe_name = shape.name.replace(" ", "")
+                            sorted_shapes = sorted(
+                                slide.shapes,
+                                key=lambda s: (
+                                    float("-inf") if not s.top else s.top,
+                                    float("-inf") if not s.left else s.left,
+                                ),
+                            )
+                            for shape in sorted_shapes:
+                                if not (shape.shape_type == 13 or (shape.shape_type == 14 and hasattr(shape, "image"))):
+                                    continue
+                                try:
+                                    blob = shape.image.blob
                                     ext = shape.image.ext
-                                    img_filename = f"{os.path.splitext(file.filename)[0]}_{safe_name}.{ext}"
-                                    img_path = os.path.join(job_dir, img_filename)
-                                    
-                                    with open(img_path, "wb") as img_f:
-                                        img_f.write(shape.image.blob)
+                                except Exception:
+                                    continue
 
-                                    # URL encode the filename for markdown to handle spaces properly
-                                    encoded_filename = urllib.parse.quote(img_filename)
-                                    pattern = rf"\]\({safe_name}\.[a-zA-Z]+\)"
-                                    replacement = f"](/static/conversions/{job_id}/{encoded_filename})"
-                                    markdown_text = re.sub(pattern, replacement, markdown_text, flags=re.IGNORECASE)
+                                placeholder_name = re.sub(r"\W", "", shape.name)
+                                placeholder = f"{placeholder_name}.jpg"
+
+                                count = img_counter.get(placeholder_name, 0)
+                                img_counter[placeholder_name] = count + 1
+                                save_name = f"{file_prefix}_{placeholder_name}_{count}.{ext}" if count > 0 else f"{file_prefix}_{placeholder_name}.{ext}"
+
+                                img_path = os.path.join(job_dir, save_name)
+                                with open(img_path, "wb") as img_f:
+                                    img_f.write(blob)
+
+                                encoded_filename = urllib.parse.quote(save_name)
+                                img_url = f"/static/conversions/{job_id}/{encoded_filename}"
+
+                                old_ref = f"]({placeholder})"
+                                new_ref = f"]({img_url})"
+                                markdown_text = markdown_text.replace(old_ref, new_ref, 1)
+
                     except Exception as e:
                         print(f"Error extracting PPTX images in batch: {e}")
 
