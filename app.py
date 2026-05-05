@@ -28,11 +28,65 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 md = MarkItDown()
 
+def _extract_pivot_tables(wb_formula, wb_data):
+    """Extract pivot tables by reading displayed cell values from pivot location range."""
+    from openpyxl.utils import range_boundaries
+    pivots_by_sheet = {}
+
+    for ws_f in wb_formula.worksheets:
+        if not ws_f._pivots:
+            continue
+
+        ws_d = wb_data[ws_f.title]
+        sheet_pivots = []
+
+        for pivot in ws_f._pivots:
+            info = {"name": pivot.name or "Pivot Table"}
+
+            # Source range metadata
+            cache = pivot.cache
+            if cache and cache.cacheSource and cache.cacheSource.worksheetSource:
+                src = cache.cacheSource.worksheetSource
+                info["source"] = f"{src.sheet}!{src.ref}" if src.sheet else str(src.ref or "")
+
+            # Field names from cache
+            if cache and cache.cacheFields:
+                info["fields"] = [cf.name for cf in cache.cacheFields if cf.name]
+
+            # Read cell values from pivot's rendered location
+            if pivot.location and pivot.location.ref:
+                ref = pivot.location.ref
+                min_col, min_row, max_col, max_row = range_boundaries(ref)
+                rows = []
+                for r in range(min_row, max_row + 1):
+                    row = []
+                    for c in range(min_col, max_col + 1):
+                        val = ws_d.cell(r, c).value
+                        row.append(str(val) if val is not None else '')
+                    rows.append(row)
+                info["rows"] = rows
+
+            sheet_pivots.append(info)
+
+        if sheet_pivots:
+            pivots_by_sheet[ws_f.title] = sheet_pivots
+
+    return pivots_by_sheet
+
+
+def _escape_cell(text):
+    """Escape pipe and newline for Markdown table cell."""
+    return text.replace('|', '\\|').replace('\n', ' ')
+
+
 def convert_excel_with_formulas(file_path):
-    """Convert Excel (.xlsx) showing both values and formulas: value (`=FORMULA`)."""
+    """Convert Excel (.xlsx) showing values, formulas, and pivot tables."""
     wb_data = load_workbook(file_path, data_only=True)
     wb_formula = load_workbook(file_path, data_only=False)
     parts = []
+
+    # Extract pivot tables (needs both workbooks)
+    pivots_by_sheet = _extract_pivot_tables(wb_formula, wb_data)
 
     for name in wb_formula.sheetnames:
         ws_d, ws_f = wb_data[name], wb_formula[name]
@@ -50,7 +104,7 @@ def convert_excel_with_formulas(file_path):
                     text = f"{val if val is not None else ''} (`{raw}`)"
                 else:
                     text = str(val) if val is not None else ''
-                row.append(text.replace('|', '\\|').replace('\n', ' '))
+                row.append(_escape_cell(text))
             rows.append(row)
 
         if not rows:
@@ -62,6 +116,30 @@ def convert_excel_with_formulas(file_path):
         for row in rows[1:]:
             parts.append('| ' + ' | '.join((row + [''] * ncols)[:ncols]) + ' |')
         parts.append('')
+
+        # Render pivot tables for this sheet
+        if name in pivots_by_sheet:
+            for pv in pivots_by_sheet[name]:
+                parts.append(f"### Pivot Table: {pv['name']}\n")
+                if pv.get("source"):
+                    parts.append(f"**Source:** `{pv['source']}`\n")
+                if pv.get("fields"):
+                    parts.append(f"**Fields:** {', '.join(pv['fields'])}\n")
+
+                pv_rows = pv.get("rows", [])
+                if not pv_rows:
+                    parts.append("*Pivot table detected but no cached data available.*\n")
+                    continue
+
+                ncols_pv = max(len(r) for r in pv_rows)
+                # First row as header
+                h_row = [_escape_cell(c) for c in (pv_rows[0] + [''] * ncols_pv)[:ncols_pv]]
+                parts.append('| ' + ' | '.join(h_row) + ' |')
+                parts.append('| ' + ' | '.join(['---'] * ncols_pv) + ' |')
+                for row in pv_rows[1:]:
+                    cells = [_escape_cell(c) for c in (row + [''] * ncols_pv)[:ncols_pv]]
+                    parts.append('| ' + ' | '.join(cells) + ' |')
+                parts.append('')
 
     wb_data.close()
     wb_formula.close()
