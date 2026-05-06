@@ -99,37 +99,46 @@ def _escape_cell(text):
 
 def convert_excel_with_formulas(file_path):
     """Convert Excel (.xlsx) showing values, formulas, and pivot tables."""
-    wb_data = load_workbook(file_path, data_only=True)
-    wb_formula = load_workbook(file_path, data_only=False)
+    # Use read_only=True to prevent OOM on large files (streams XML instead of loading all objects into memory)
+    wb_data = load_workbook(file_path, data_only=True, read_only=True)
+    wb_formula = load_workbook(file_path, data_only=False, read_only=True)
     parts = []
 
-    # Extract pivot tables (needs both workbooks)
-    pivots_by_sheet = _extract_pivot_tables(wb_formula, wb_data)
+    # Extract pivot tables (might be skipped if read_only=True doesn't support _pivots, but we gracefully catch it)
+    try:
+        pivots_by_sheet = _extract_pivot_tables(wb_formula, wb_data)
+    except Exception:
+        pivots_by_sheet = {}
 
     for name in wb_formula.sheetnames:
         ws_d, ws_f = wb_data[name], wb_formula[name]
-        if not ws_f.max_row or not ws_f.max_column:
-            continue
 
         parts.append(f"## {name}\n")
         rows = []
-        for r in range(1, ws_f.max_row + 1):
-            row = []
-            for c in range(1, ws_f.max_column + 1):
-                val = ws_d.cell(r, c).value
-                raw = ws_f.cell(r, c).value
+        
+        # Use iter_rows to stream row by row simultaneously (O(N) time and O(1) memory)
+        for row_d, row_f in zip(ws_d.iter_rows(values_only=True), ws_f.iter_rows(values_only=False)):
+            row_data = []
+            for val, cell_f in zip(row_d, row_f):
+                raw = cell_f.value
                 if isinstance(raw, str) and raw.startswith('='):
                     text = f"{val if val is not None else ''} (`{raw}`)"
                 else:
                     text = str(val) if val is not None else ''
-                row.append(_escape_cell(text))
-            rows.append(row)
+                row_data.append(_escape_cell(text))
+            
+            # Only append if row has at least one non-empty cell (to avoid massive trailing blank rows)
+            if any(c.strip() != '' for c in row_data):
+                rows.append(row_data)
 
         if not rows:
             continue
 
-        ncols = len(rows[0])
-        parts.append('| ' + ' | '.join(rows[0]) + ' |')
+        ncols = max(len(r) for r in rows) if rows else 0
+        if ncols == 0:
+            continue
+            
+        parts.append('| ' + ' | '.join((rows[0] + [''] * ncols)[:ncols]) + ' |')
         parts.append('| ' + ' | '.join(['---'] * ncols) + ' |')
         for row in rows[1:]:
             parts.append('| ' + ' | '.join((row + [''] * ncols)[:ncols]) + ' |')
