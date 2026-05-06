@@ -357,9 +357,10 @@
                 
                 // POLLING LOGIC
                 if (data.status === 'processing' && data.job_id) {
+                    const jobId = data.job_id;
                     while (true) {
                         await new Promise(r => setTimeout(r, 2000));
-                        const pollRes = await fetch(`/api/status/${data.job_id}`);
+                        const pollRes = await fetch(`/api/status/${jobId}`);
                         const pollContentType = pollRes.headers.get("content-type");
                         if (pollContentType && pollContentType.includes("application/json")) {
                             data = await pollRes.json();
