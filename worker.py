@@ -1,0 +1,164 @@
+"""
+Subprocess worker for file conversion.
+Runs in an isolated process so OOM kills only this process, not the main server.
+Usage: python worker.py <job_id> <job_dir> <file_path> <filename>
+"""
+import sys
+import os
+import re
+import json
+import urllib.parse
+
+
+def _escape_cell(text):
+    return text.replace('|', '\\|').replace('\n', ' ')
+
+
+def _extract_vba_macros(file_path):
+    try:
+        from oletools.olevba import VBA_Parser
+        vba_parser = VBA_Parser(file_path)
+        if not vba_parser.detect_vba_macros():
+            vba_parser.close()
+            return ""
+        parts = ["\n## VBA Macros\n"]
+        for (filename, stream_path, vba_filename, vba_code_chunk) in vba_parser.extract_macros():
+            parts.append(f"### Module: {vba_filename}\n```vba\n{vba_code_chunk}\n```\n")
+        vba_parser.close()
+        return "\n".join(parts)
+    except Exception as e:
+        print(f"Error extracting VBA: {e}")
+        return ""
+
+
+def convert_excel_with_formulas(file_path):
+    from openpyxl import load_workbook
+    wb_data = load_workbook(file_path, data_only=True, read_only=True)
+    wb_formula = load_workbook(file_path, data_only=False, read_only=True)
+    parts = []
+
+    for name in wb_formula.sheetnames:
+        ws_d, ws_f = wb_data[name], wb_formula[name]
+        parts.append(f"## {name}\n")
+        rows = []
+        for row_d, row_f in zip(ws_d.iter_rows(values_only=True), ws_f.iter_rows(values_only=False)):
+            row_data = []
+            for val, cell_f in zip(row_d, row_f):
+                raw = cell_f.value
+                if isinstance(raw, str) and raw.startswith('='):
+                    text = f"{val if val is not None else ''} (`{raw}`)"
+                else:
+                    text = str(val) if val is not None else ''
+                row_data.append(_escape_cell(text))
+            if any(c.strip() != '' for c in row_data):
+                rows.append(row_data)
+
+        if not rows:
+            continue
+        ncols = max(len(r) for r in rows)
+        if ncols == 0:
+            continue
+        parts.append('| ' + ' | '.join((rows[0] + [''] * ncols)[:ncols]) + ' |')
+        parts.append('| ' + ' | '.join(['---'] * ncols) + ' |')
+        for row in rows[1:]:
+            parts.append('| ' + ' | '.join((row + [''] * ncols)[:ncols]) + ' |')
+        parts.append('')
+
+    wb_data.close()
+    wb_formula.close()
+    return '\n'.join(parts)
+
+
+def convert_file(job_id, job_dir, file_path, filename):
+    """Core conversion logic -- runs in isolated process."""
+    markdown_text = ""
+
+    if filename.lower().endswith(('.xlsx', '.xlsm', '.xltx', '.xltm')):
+        markdown_text = convert_excel_with_formulas(file_path)
+    else:
+        # Only import MarkItDown here -- keeps main server process lean
+        from markitdown import MarkItDown
+        md = MarkItDown()
+        result = md.convert(file_path)
+        markdown_text = result.text_content
+        markdown_text = re.sub(r'\bNaN\b', '', markdown_text)
+        markdown_text = re.sub(r'Unnamed:\s*\d+', '', markdown_text)
+
+    # VBA macros
+    office_exts = ('doc', 'docx', 'docm', 'dot', 'dotx', 'dotm',
+                   'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'xltm',
+                   'ppt', 'pptx', 'pptm', 'pot', 'potx', 'potm', 'pps', 'ppsx', 'ppsm')
+    if filename.lower().endswith(office_exts):
+        vba_text = _extract_vba_macros(file_path)
+        if vba_text:
+            markdown_text += vba_text
+
+    # PPTX images
+    if filename.lower().endswith('.pptx'):
+        try:
+            from pptx import Presentation
+            prs = Presentation(file_path)
+            img_counter = {}
+            for slide in prs.slides:
+                sorted_shapes = sorted(
+                    slide.shapes,
+                    key=lambda s: (
+                        float("-inf") if not s.top else s.top,
+                        float("-inf") if not s.left else s.left,
+                    ),
+                )
+                for shape in sorted_shapes:
+                    if not (shape.shape_type == 13 or (shape.shape_type == 14 and hasattr(shape, "image"))):
+                        continue
+                    try:
+                        blob = shape.image.blob
+                        ext = shape.image.ext
+                    except Exception:
+                        continue
+
+                    placeholder_name = re.sub(r"\W", "", shape.name)
+                    placeholder = f"{placeholder_name}.jpg"
+                    count = img_counter.get(placeholder_name, 0)
+                    img_counter[placeholder_name] = count + 1
+                    save_name = f"{placeholder_name}_{count}.{ext}" if count > 0 else f"{placeholder_name}.{ext}"
+
+                    img_path = os.path.join(job_dir, save_name)
+                    with open(img_path, "wb") as img_f:
+                        img_f.write(blob)
+
+                    encoded_filename = urllib.parse.quote(save_name)
+                    img_url = f"/static/conversions/{job_id}/{encoded_filename}"
+                    markdown_text = markdown_text.replace(f"]({placeholder})", f"]({img_url})", 1)
+        except Exception as e:
+            print(f"Error extracting PPTX images: {e}")
+
+    return markdown_text
+
+
+def main():
+    if len(sys.argv) < 5:
+        print("Usage: python worker.py <job_id> <job_dir> <file_path> <filename>")
+        sys.exit(1)
+
+    job_id, job_dir, file_path, filename = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+
+    try:
+        markdown_text = convert_file(job_id, job_dir, file_path, filename)
+
+        md_filename = f"{os.path.splitext(filename)[0]}.md"
+        with open(os.path.join(job_dir, md_filename), "w", encoding="utf-8") as f:
+            f.write(markdown_text)
+
+        with open(os.path.join(job_dir, "success.txt"), "w") as f:
+            f.write(md_filename)
+
+    except Exception as e:
+        with open(os.path.join(job_dir, "error.txt"), "w", encoding="utf-8") as f:
+            f.write(str(e))
+    finally:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+
+if __name__ == "__main__":
+    main()
