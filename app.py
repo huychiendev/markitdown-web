@@ -4,11 +4,16 @@ import shutil
 import json
 import subprocess
 import threading
+import urllib.parse
+import mimetypes
 from typing import List
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+
+# Register .md as markdown for correct Content-Type headers
+mimetypes.add_type('text/markdown', '.md')
 
 app = FastAPI(title="MarkItDown Web UI")
 
@@ -194,6 +199,7 @@ def check_status(job_id: str):
         return {
             "success": True, "status": "completed",
             "markdown": markdown_text,
+            "filename_md": md_filename,
             "download_url": f"/static/conversions/{job_id}/{md_filename}"
         }
 

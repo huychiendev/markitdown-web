@@ -414,6 +414,7 @@
                     // Enable buttons
                     btnCopy.disabled = false;
                     btnDownload.href = data.download_url;
+                    btnDownload.setAttribute('download', isBatch ? 'archive.zip' : (data.filename_md || 'document.md'));
                     btnDownload.classList.remove('pointer-events-none', 'opacity-50');
                     btnDownload.innerHTML = isBatch 
                         ? '<i data-lucide="folder-down" class="w-4 h-4 inline mr-1"></i> Download All (ZIP)'
