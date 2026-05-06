@@ -355,6 +355,24 @@
                     throw new Error(`Lỗi máy chủ (Status ${response.status}): ${text ? text : 'Phản hồi trống hoặc không phải JSON.'}`);
                 }
                 
+                // POLLING LOGIC
+                if (data.status === 'processing' && data.job_id) {
+                    while (true) {
+                        await new Promise(r => setTimeout(r, 2000));
+                        const pollRes = await fetch(`/api/status/${data.job_id}`);
+                        const pollContentType = pollRes.headers.get("content-type");
+                        if (pollContentType && pollContentType.includes("application/json")) {
+                            data = await pollRes.json();
+                        } else {
+                            throw new Error(`Lỗi máy chủ (Status ${pollRes.status}) khi kiểm tra trạng thái.`);
+                        }
+                        
+                        if (data.status === 'completed') break;
+                        if (!data.success || data.status === 'error') throw new Error(data.error || 'Lỗi xử lý file.');
+                        // If still 'processing', continue the loop
+                    }
+                }
+                
                 if (data.success) {
                     progressBadge.classList.add('hidden');
                     

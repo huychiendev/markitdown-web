@@ -4,7 +4,7 @@ import re
 import shutil
 import time
 import urllib.parse
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, UploadFile, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -190,24 +190,10 @@ def cleanup_old_jobs(directory="static/conversions", max_size_mb=100):
 def serve_index():
     return FileResponse("static/index.html")
 
-@app.post("/api/convert")
-def convert_file(file: UploadFile = File(...)):
-    # Auto clean up before processing new file
-    cleanup_old_jobs()
-    
-    job_id = str(uuid.uuid4())
-    job_dir = f"static/conversions/{job_id}"
-    os.makedirs(job_dir, exist_ok=True)
-    
-    file_path = os.path.join(job_dir, file.filename)
-    
+def process_single_file(job_id: str, job_dir: str, file_path: str, filename: str):
     try:
-        # Save uploaded file
-        with open(file_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
-            
         # Excel: extract values + formulas via openpyxl
-        if file.filename.lower().endswith(('.xlsx', '.xlsm', '.xltx', '.xltm')):
+        if filename.lower().endswith(('.xlsx', '.xlsm', '.xltx', '.xltm')):
             markdown_text = convert_excel_with_formulas(file_path)
         else:
             result = md.convert(file_path)
@@ -219,18 +205,17 @@ def convert_file(file: UploadFile = File(...)):
         office_exts = ('doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 
                        'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'xltm', 
                        'ppt', 'pptx', 'pptm', 'pot', 'potx', 'potm', 'pps', 'ppsx', 'ppsm')
-        if file.filename.lower().endswith(office_exts):
+        if filename.lower().endswith(office_exts):
             vba_text = _extract_vba_macros(file_path)
             if vba_text:
                 markdown_text += vba_text
         
         # PPTX specific logic to extract images and rewrite markdown
-        if file.filename.lower().endswith('.pptx'):
+        if filename.lower().endswith('.pptx'):
             try:
                 prs = Presentation(file_path)
                 img_counter = {}
                 for slide in prs.slides:
-                    # Match MarkItDown's exact sort order: (top, left)
                     sorted_shapes = sorted(
                         slide.shapes,
                         key=lambda s: (
@@ -247,11 +232,9 @@ def convert_file(file: UploadFile = File(...)):
                         except Exception:
                             continue
 
-                        # MarkItDown uses: re.sub(r"\W", "", shape.name) + ".jpg"
                         placeholder_name = re.sub(r"\W", "", shape.name)
                         placeholder = f"{placeholder_name}.jpg"
 
-                        # Handle duplicate shape names: add counter suffix for file saving
                         count = img_counter.get(placeholder_name, 0)
                         img_counter[placeholder_name] = count + 1
                         save_name = f"{placeholder_name}_{count}.{ext}" if count > 0 else f"{placeholder_name}.{ext}"
@@ -263,7 +246,6 @@ def convert_file(file: UploadFile = File(...)):
                         encoded_filename = urllib.parse.quote(save_name)
                         img_url = f"/static/conversions/{job_id}/{encoded_filename}"
 
-                        # Replace only the FIRST occurrence to preserve correct position order
                         old_ref = f"]({placeholder})"
                         new_ref = f"]({img_url})"
                         markdown_text = markdown_text.replace(old_ref, new_ref, 1)
@@ -272,15 +254,43 @@ def convert_file(file: UploadFile = File(...)):
                 print(f"Error extracting PPTX images: {e}")
 
         # Save the final markdown to a file for download
-        md_filename = f"{os.path.splitext(file.filename)[0]}.md"
+        md_filename = f"{os.path.splitext(filename)[0]}.md"
         md_filepath = os.path.join(job_dir, md_filename)
         with open(md_filepath, "w", encoding="utf-8") as f:
             f.write(markdown_text)
             
+        # Write success flag
+        with open(os.path.join(job_dir, "success.txt"), "w") as f:
+            f.write(md_filename)
+            
+    except Exception as e:
+        with open(os.path.join(job_dir, "error.txt"), "w") as f:
+            f.write(str(e))
+    finally:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+@app.post("/api/convert")
+def convert_file(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    # Auto clean up before processing new file
+    cleanup_old_jobs()
+    
+    job_id = str(uuid.uuid4())
+    job_dir = f"static/conversions/{job_id}"
+    os.makedirs(job_dir, exist_ok=True)
+    
+    file_path = os.path.join(job_dir, file.filename)
+    
+    try:
+        # Save uploaded file
+        with open(file_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+            
+        background_tasks.add_task(process_single_file, job_id, job_dir, file_path, file.filename)
+            
         return {
             "success": True,
-            "markdown": markdown_text,
-            "download_url": f"/static/conversions/{job_id}/{md_filename}",
+            "status": "processing",
             "job_id": job_id
         }
         
@@ -289,27 +299,15 @@ def convert_file(file: UploadFile = File(...)):
 
 from typing import List
 
-@app.post("/api/convert_batch")
-def convert_batch(files: List[UploadFile] = File(...)):
-    cleanup_old_jobs()
-    
-    job_id = str(uuid.uuid4())
-    job_dir = f"static/conversions/{job_id}"
-    os.makedirs(job_dir, exist_ok=True)
-    
+import json
+
+def process_batch_files_task(job_id: str, job_dir: str, file_paths: list, filenames: list):
     try:
         results_data = []
-        # Process each file
-        for file in files:
-            # Recreate relative directory structure if needed, but for simplicity we flatten or use filenames
-            # In HTML file inputs with webkitdirectory, the filename is just the basename in FastAPI.
-            # So we will just use the basename. If there are duplicates, we could have issues, but let's assume unique names.
-            file_path = os.path.join(job_dir, file.filename)
-            with open(file_path, "wb") as f:
-                shutil.copyfileobj(file.file, f)
-            
+        for i, file_path in enumerate(file_paths):
+            filename = filenames[i]
             try:
-                if file.filename.lower().endswith(('.xlsx', '.xlsm', '.xltx', '.xltm')):
+                if filename.lower().endswith(('.xlsx', '.xlsm', '.xltx', '.xltm')):
                     markdown_text = convert_excel_with_formulas(file_path)
                 else:
                     result = md.convert(file_path)
@@ -321,15 +319,15 @@ def convert_batch(files: List[UploadFile] = File(...)):
                 office_exts = ('doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 
                                'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'xltm', 
                                'ppt', 'pptx', 'pptm', 'pot', 'potx', 'potm', 'pps', 'ppsx', 'ppsm')
-                if file.filename.lower().endswith(office_exts):
+                if filename.lower().endswith(office_exts):
                     vba_text = _extract_vba_macros(file_path)
                     if vba_text:
                         markdown_text += vba_text
                 
-                if file.filename.lower().endswith('.pptx'):
+                if filename.lower().endswith('.pptx'):
                     try:
                         prs = Presentation(file_path)
-                        file_prefix = os.path.splitext(file.filename)[0]
+                        file_prefix = os.path.splitext(filename)[0]
                         img_counter = {}
                         for slide in prs.slides:
                             sorted_shapes = sorted(
@@ -370,34 +368,97 @@ def convert_batch(files: List[UploadFile] = File(...)):
                         print(f"Error extracting PPTX images in batch: {e}")
 
                 # Save md file
-                md_filename = f"{os.path.splitext(file.filename)[0]}.md"
+                md_filename = f"{os.path.splitext(filename)[0]}.md"
                 with open(os.path.join(job_dir, md_filename), "w", encoding="utf-8") as f:
                     f.write(markdown_text)
                     
                 results_data.append({
-                    "filename": file.filename,
+                    "filename": filename,
                     "markdown": markdown_text
                 })
-                    
             except Exception as e:
-                print(f"Error converting {file.filename}: {e}")
-                
-            # Remove original file from zip to save space
-            os.remove(file_path)
+                print(f"Error converting {filename}: {e}")
+            finally:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
             
         # Create ZIP archive
         zip_path = f"static/conversions/{job_id}_archive"
         shutil.make_archive(zip_path, 'zip', job_dir)
         
+        # Write success data
+        with open(os.path.join(job_dir, "success.json"), "w", encoding="utf-8") as f:
+            json.dump(results_data, f)
+            
+    except Exception as e:
+        with open(os.path.join(job_dir, "error.txt"), "w") as f:
+            f.write(str(e))
+
+@app.post("/api/convert_batch")
+def convert_batch(background_tasks: BackgroundTasks, files: List[UploadFile] = File(...)):
+    cleanup_old_jobs()
+    
+    job_id = str(uuid.uuid4())
+    job_dir = f"static/conversions/{job_id}"
+    os.makedirs(job_dir, exist_ok=True)
+    
+    try:
+        file_paths = []
+        filenames = []
+        for file in files:
+            file_path = os.path.join(job_dir, file.filename)
+            with open(file_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+            file_paths.append(file_path)
+            filenames.append(file.filename)
+            
+        background_tasks.add_task(process_batch_files_task, job_id, job_dir, file_paths, filenames)
+        
         return {
             "success": True,
-            "results": results_data,
-            "download_url": f"/static/conversions/{job_id}_archive.zip",
+            "status": "processing",
             "job_id": job_id
         }
         
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
+@app.get("/api/status/{job_id}")
+def check_status(job_id: str):
+    job_dir = f"static/conversions/{job_id}"
+    if not os.path.exists(job_dir):
+        return {"success": False, "error": "Job not found"}
+        
+    if os.path.exists(os.path.join(job_dir, "error.txt")):
+        with open(os.path.join(job_dir, "error.txt"), "r") as f:
+            return {"success": False, "error": f.read()}
+            
+    # Check if single file success
+    if os.path.exists(os.path.join(job_dir, "success.txt")):
+        with open(os.path.join(job_dir, "success.txt"), "r") as f:
+            md_filename = f.read().strip()
+        md_filepath = os.path.join(job_dir, md_filename)
+        with open(md_filepath, "r", encoding="utf-8") as f:
+            markdown_text = f.read()
+        return {
+            "success": True,
+            "status": "completed",
+            "markdown": markdown_text,
+            "download_url": f"/static/conversions/{job_id}/{md_filename}"
+        }
+        
+    # Check if batch file success
+    if os.path.exists(os.path.join(job_dir, "success.json")):
+        with open(os.path.join(job_dir, "success.json"), "r", encoding="utf-8") as f:
+            results_data = json.load(f)
+        return {
+            "success": True,
+            "status": "completed",
+            "results": results_data,
+            "download_url": f"/static/conversions/{job_id}_archive.zip"
+        }
+        
+    return {"success": True, "status": "processing"}
 
 if __name__ == "__main__":
     import uvicorn
