@@ -185,12 +185,13 @@ def cleanup_old_jobs(directory="static/conversions", max_size_mb=100):
     except Exception as e:
         print(f"Lỗi khi dọn dẹp thư mục: {e}")
 
+@app.head("/")
 @app.get("/")
 def serve_index():
     return FileResponse("static/index.html")
 
 @app.post("/api/convert")
-async def convert_file(file: UploadFile = File(...)):
+def convert_file(file: UploadFile = File(...)):
     # Auto clean up before processing new file
     cleanup_old_jobs()
     
@@ -289,7 +290,7 @@ async def convert_file(file: UploadFile = File(...)):
 from typing import List
 
 @app.post("/api/convert_batch")
-async def convert_batch(files: List[UploadFile] = File(...)):
+def convert_batch(files: List[UploadFile] = File(...)):
     cleanup_old_jobs()
     
     job_id = str(uuid.uuid4())
