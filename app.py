@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from markitdown import MarkItDown
 from pptx import Presentation
 from openpyxl import load_workbook
-
+from oletools.olevba import VBA_Parser
 app = FastAPI(title="MarkItDown Web UI")
 
 app.add_middleware(
@@ -73,6 +73,24 @@ def _extract_pivot_tables(wb_formula, wb_data):
 
     return pivots_by_sheet
 
+
+def _extract_vba_macros(file_path):
+    """Extract VBA macros from Office files."""
+    try:
+        vba_parser = VBA_Parser(file_path)
+        if not vba_parser.detect_vba_macros():
+            vba_parser.close()
+            return ""
+
+        parts = ["\n## VBA Macros\n"]
+        for (filename, stream_path, vba_filename, vba_code_chunk) in vba_parser.extract_macros():
+            parts.append(f"### Module: {vba_filename}\n```vba\n{vba_code_chunk}\n```\n")
+        
+        vba_parser.close()
+        return "\n".join(parts)
+    except Exception as e:
+        print(f"Error extracting VBA: {e}")
+        return ""
 
 def _escape_cell(text):
     """Escape pipe and newline for Markdown table cell."""
@@ -188,13 +206,22 @@ async def convert_file(file: UploadFile = File(...)):
             shutil.copyfileobj(file.file, f)
             
         # Excel: extract values + formulas via openpyxl
-        if file.filename.lower().endswith('.xlsx'):
+        if file.filename.lower().endswith(('.xlsx', '.xlsm', '.xltx', '.xltm')):
             markdown_text = convert_excel_with_formulas(file_path)
         else:
             result = md.convert(file_path)
             markdown_text = result.text_content
             markdown_text = re.sub(r'\bNaN\b', '', markdown_text)
             markdown_text = re.sub(r'Unnamed:\s*\d+', '', markdown_text)
+
+        # Extract VBA macros for Office files
+        office_exts = ('doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 
+                       'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'xltm', 
+                       'ppt', 'pptx', 'pptm', 'pot', 'potx', 'potm', 'pps', 'ppsx', 'ppsm')
+        if file.filename.lower().endswith(office_exts):
+            vba_text = _extract_vba_macros(file_path)
+            if vba_text:
+                markdown_text += vba_text
         
         # PPTX specific logic to extract images and rewrite markdown
         if file.filename.lower().endswith('.pptx'):
@@ -281,13 +308,22 @@ async def convert_batch(files: List[UploadFile] = File(...)):
                 shutil.copyfileobj(file.file, f)
             
             try:
-                if file.filename.lower().endswith('.xlsx'):
+                if file.filename.lower().endswith(('.xlsx', '.xlsm', '.xltx', '.xltm')):
                     markdown_text = convert_excel_with_formulas(file_path)
                 else:
                     result = md.convert(file_path)
                     markdown_text = result.text_content
                     markdown_text = re.sub(r'\bNaN\b', '', markdown_text)
                     markdown_text = re.sub(r'Unnamed:\s*\d+', '', markdown_text)
+                
+                # Extract VBA macros for Office files
+                office_exts = ('doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 
+                               'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'xltm', 
+                               'ppt', 'pptx', 'pptm', 'pot', 'potx', 'potm', 'pps', 'ppsx', 'ppsm')
+                if file.filename.lower().endswith(office_exts):
+                    vba_text = _extract_vba_macros(file_path)
+                    if vba_text:
+                        markdown_text += vba_text
                 
                 if file.filename.lower().endswith('.pptx'):
                     try:

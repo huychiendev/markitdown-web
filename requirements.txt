@@ -7,3 +7,4 @@ pillow
 jinja2
 openpyxl
 pandas
+oletools
