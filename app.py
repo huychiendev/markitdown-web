@@ -106,14 +106,17 @@ def convert_file(file: UploadFile = File(...)):
     job_id = str(uuid.uuid4())
     job_dir = f"static/conversions/{job_id}"
     os.makedirs(job_dir, exist_ok=True)
-    file_path = os.path.join(job_dir, file.filename)
+    
+    safe_filename = file.filename.lstrip("/")
+    file_path = os.path.join(job_dir, safe_filename)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
 
     try:
         with open(file_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
 
         # Spawn worker in a background thread (thread is cheap, the heavy work is in subprocess)
-        t = threading.Thread(target=_run_worker, args=(job_dir, [job_id, job_dir, file_path, file.filename]))
+        t = threading.Thread(target=_run_worker, args=(job_dir, [job_id, job_dir, file_path, safe_filename]))
         t.daemon = True
         t.start()
 
@@ -134,10 +137,13 @@ def convert_batch(files: List[UploadFile] = File(...)):
     try:
         file_entries = []
         for file in files:
-            file_path = os.path.join(job_dir, file.filename)
+            # Secure the filename from absolute paths
+            safe_filename = file.filename.lstrip("/")
+            file_path = os.path.join(job_dir, safe_filename)
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
             with open(file_path, "wb") as f:
                 shutil.copyfileobj(file.file, f)
-            file_entries.append({"path": file_path, "name": file.filename})
+            file_entries.append({"path": file_path, "name": safe_filename})
 
         def _batch_worker():
             results_data = []
@@ -145,10 +151,12 @@ def convert_batch(files: List[UploadFile] = File(...)):
                 fp, fn = entry["path"], entry["name"]
                 # Run each file in its own subprocess for maximum memory isolation
                 try:
-                    subprocess.run(
-                        ["python", "worker.py", job_id, job_dir, fp, fn],
+                    res = subprocess.run(
+                        ["python", "worker.py", job_id, job_dir, fp, fn, "--batch"],
                         timeout=300, capture_output=True, text=True
                     )
+                    if res.returncode != 0:
+                        print(f"Error converting {fn}: {res.stderr}")
                 except Exception as e:
                     print(f"Error converting {fn}: {e}")
 
@@ -166,10 +174,6 @@ def convert_batch(files: List[UploadFile] = File(...)):
             # Write batch success
             with open(os.path.join(job_dir, "success.json"), "w", encoding="utf-8") as f:
                 json.dump(results_data, f)
-
-            # Clean up per-file success.txt markers (batch uses success.json)
-            for txt in [f for f in os.listdir(job_dir) if f == "success.txt"]:
-                os.remove(os.path.join(job_dir, txt))
 
         t = threading.Thread(target=_batch_worker)
         t.daemon = True
@@ -191,6 +195,15 @@ def check_status(job_id: str):
         with open(os.path.join(job_dir, "error.txt"), "r", encoding="utf-8") as f:
             return {"success": False, "error": f.read()}
 
+    if os.path.exists(os.path.join(job_dir, "success.json")):
+        with open(os.path.join(job_dir, "success.json"), "r", encoding="utf-8") as f:
+            results_data = json.load(f)
+        return {
+            "success": True, "status": "completed",
+            "results": results_data,
+            "download_url": f"/static/conversions/{job_id}_archive.zip"
+        }
+
     if os.path.exists(os.path.join(job_dir, "success.txt")):
         with open(os.path.join(job_dir, "success.txt"), "r") as f:
             md_filename = f.read().strip()
@@ -201,15 +214,6 @@ def check_status(job_id: str):
             "markdown": markdown_text,
             "filename_md": md_filename,
             "download_url": f"/static/conversions/{job_id}/{md_filename}"
-        }
-
-    if os.path.exists(os.path.join(job_dir, "success.json")):
-        with open(os.path.join(job_dir, "success.json"), "r", encoding="utf-8") as f:
-            results_data = json.load(f)
-        return {
-            "success": True, "status": "completed",
-            "results": results_data,
-            "download_url": f"/static/conversions/{job_id}_archive.zip"
         }
 
     return {"success": True, "status": "processing"}

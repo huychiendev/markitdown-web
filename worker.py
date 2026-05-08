@@ -137,24 +137,33 @@ def convert_file(job_id, job_dir, file_path, filename):
 
 def main():
     if len(sys.argv) < 5:
-        print("Usage: python worker.py <job_id> <job_dir> <file_path> <filename>")
+        print("Usage: python worker.py <job_id> <job_dir> <file_path> <filename> [--batch]")
         sys.exit(1)
 
     job_id, job_dir, file_path, filename = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+    is_batch = len(sys.argv) > 5 and sys.argv[5] == "--batch"
 
     try:
         markdown_text = convert_file(job_id, job_dir, file_path, filename)
 
         md_filename = f"{os.path.splitext(filename)[0]}.md"
-        with open(os.path.join(job_dir, md_filename), "w", encoding="utf-8") as f:
+        md_filepath = os.path.join(job_dir, md_filename)
+        os.makedirs(os.path.dirname(md_filepath), exist_ok=True)
+        
+        with open(md_filepath, "w", encoding="utf-8") as f:
             f.write(markdown_text)
 
-        with open(os.path.join(job_dir, "success.txt"), "w") as f:
-            f.write(md_filename)
+        if not is_batch:
+            with open(os.path.join(job_dir, "success.txt"), "w") as f:
+                f.write(md_filename)
 
     except Exception as e:
-        with open(os.path.join(job_dir, "error.txt"), "w", encoding="utf-8") as f:
-            f.write(str(e))
+        if not is_batch:
+            with open(os.path.join(job_dir, "error.txt"), "w", encoding="utf-8") as f:
+                f.write(str(e))
+        else:
+            print(f"Error processing {filename}: {e}", file=sys.stderr)
+            sys.exit(1)
     finally:
         if os.path.exists(file_path):
             os.remove(file_path)

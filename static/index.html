@@ -79,8 +79,8 @@
                 </div>
             </div>
             <div>
-                <span id="progressBadge" class="hidden px-3 py-1 text-xs font-medium bg-violet-500/20 text-violet-400 border border-violet-500/30 rounded-full items-center gap-2">
-                    <div class="loader w-3 h-3 border-2 border-violet-400 border-t-transparent" style="width: 12px; height: 12px; border-width: 2px;"></div>
+                <span id="progressBadge" class="hidden inline-flex items-center gap-2 px-3 py-1 text-xs font-medium bg-violet-500/20 text-violet-400 border border-violet-500/30 rounded-full">
+                    <div class="animate-spin rounded-full h-3 w-3 border-2 border-violet-400 border-t-transparent"></div>
                     <span id="progressText">Đang xử lý...</span>
                 </span>
             </div>
@@ -257,10 +257,11 @@
 
         async function getFilesFromDataTransferItems(items) {
             const files = [];
-            async function traverseFileTree(item) {
+            async function traverseFileTree(item, path = '') {
                 if (!item) return;
                 if (item.isFile) {
                     const file = await new Promise((resolve) => item.file(resolve));
+                    file.customPath = path + file.name;
                     files.push(file);
                 } else if (item.isDirectory) {
                     const dirReader = item.createReader();
@@ -269,7 +270,7 @@
                         dirReader.readEntries(resolve);
                     });
                     for (let i = 0; i < entries.length; i++) {
-                        await traverseFileTree(entries[i]);
+                        await traverseFileTree(entries[i], path + item.name + '/');
                     }
                 }
             }
@@ -277,7 +278,13 @@
             for (let i = 0; i < items.length; i++) {
                 const item = items[i].webkitGetAsEntry();
                 if (item) {
-                    await traverseFileTree(item);
+                    // For top level items, we don't prepend their own name, or maybe we do?
+                    // Let's just use empty path for top level files, and item.name for folders
+                    if (item.isDirectory) {
+                        await traverseFileTree(item, item.name + '/');
+                    } else {
+                        await traverseFileTree(item, '');
+                    }
                 }
             }
             return files;
@@ -336,7 +343,10 @@
             btnDownload.classList.add('pointer-events-none', 'opacity-50');
 
             const formData = new FormData();
-            files.forEach(f => formData.append(isBatch ? 'files' : 'file', f));
+            files.forEach(f => {
+                const filename = f.customPath || f.webkitRelativePath || f.name;
+                formData.append(isBatch ? 'files' : 'file', f, filename);
+            });
             
             const endpoint = isBatch ? '/api/convert_batch' : '/api/convert';
 
