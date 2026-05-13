@@ -209,11 +209,20 @@ def check_status(job_id: str):
             md_filename = f.read().strip()
         with open(os.path.join(job_dir, md_filename), "r", encoding="utf-8") as f:
             markdown_text = f.read()
+        zip_path = os.path.join(os.path.dirname(job_dir), f"{job_id}_archive.zip")
+        if os.path.exists(zip_path):
+            download_url = f"/static/conversions/{job_id}_archive.zip"
+            is_zip = True
+        else:
+            download_url = f"/static/conversions/{job_id}/{md_filename}"
+            is_zip = False
+            
         return {
             "success": True, "status": "completed",
             "markdown": markdown_text,
             "filename_md": md_filename,
-            "download_url": f"/static/conversions/{job_id}_archive.zip"
+            "download_url": download_url,
+            "is_zip": is_zip
         }
 
     return {"success": True, "status": "processing"}

@@ -434,11 +434,15 @@
                     // Enable buttons
                     btnCopy.disabled = false;
                     btnDownload.href = data.download_url;
-                    btnDownload.setAttribute('download', isBatch ? 'archive.zip' : (data.filename_md || 'document.md'));
                     btnDownload.classList.remove('pointer-events-none', 'opacity-50');
-                    btnDownload.innerHTML = isBatch 
-                        ? '<i data-lucide="folder-down" class="w-4 h-4 inline mr-1"></i> Download All (ZIP)'
-                        : '<i data-lucide="download" class="w-4 h-4 inline mr-1"></i> Download (ZIP)';
+                    if (isBatch || data.is_zip) {
+                        const dlName = isBatch ? 'archive.zip' : (data.filename_md ? data.filename_md.replace('.md', '.zip') : 'archive.zip');
+                        btnDownload.setAttribute('download', dlName);
+                        btnDownload.innerHTML = '<i data-lucide="folder-down" class="w-4 h-4 inline mr-1"></i> Download (ZIP)';
+                    } else {
+                        btnDownload.setAttribute('download', data.filename_md || 'document.md');
+                        btnDownload.innerHTML = '<i data-lucide="download" class="w-4 h-4 inline mr-1"></i> Download .md';
+                    }
                     lucide.createIcons();
 
                 } else {

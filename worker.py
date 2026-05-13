@@ -213,8 +213,10 @@ def main():
 
         if not is_batch:
             import shutil
-            zip_path = os.path.join(os.path.dirname(job_dir), f"{job_id}_archive")
-            shutil.make_archive(zip_path, 'zip', job_dir)
+            has_images = any(f.endswith(('.png', '.jpg', '.jpeg', '.gif')) for f in os.listdir(job_dir))
+            if has_images:
+                zip_path = os.path.join(os.path.dirname(job_dir), f"{job_id}_archive")
+                shutil.make_archive(zip_path, 'zip', job_dir)
             with open(os.path.join(job_dir, "success.txt"), "w") as f:
                 f.write(md_filename)
 
