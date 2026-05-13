@@ -33,6 +33,7 @@ def _extract_vba_macros(file_path):
 
 def convert_excel_with_formulas(job_id, job_dir, file_path):
     from openpyxl import load_workbook
+    from openpyxl.utils import get_column_letter
     wb_data = load_workbook(file_path, data_only=True, read_only=False)
     wb_formula = load_workbook(file_path, data_only=False, read_only=False)
     parts = []
@@ -83,7 +84,11 @@ def convert_excel_with_formulas(job_id, job_dir, file_path):
         actual_max_row = max(ws_d.max_row, max_img_row + 1)
         actual_max_col = max(ws_d.max_column, max_img_col + 1)
 
-        parts.append(f"## {name}\n")
+        sheet_title = name
+        if getattr(ws_f, 'sheet_state', 'visible') != 'visible':
+            sheet_title += " (sheet ẩn)"
+        parts.append(f"## {sheet_title}\n")
+        
         rows = []
         for r_idx, (row_d, row_f) in enumerate(zip(
             ws_d.iter_rows(max_row=actual_max_row, max_col=actual_max_col, values_only=True),
@@ -111,9 +116,11 @@ def convert_excel_with_formulas(job_id, job_dir, file_path):
         ncols = max(len(r) for r in rows)
         if ncols == 0:
             continue
-        parts.append('| ' + ' | '.join((rows[0] + [''] * ncols)[:ncols]) + ' |')
+            
+        header_row = [get_column_letter(i + 1) for i in range(ncols)]
+        parts.append('| ' + ' | '.join(header_row) + ' |')
         parts.append('| ' + ' | '.join(['---'] * ncols) + ' |')
-        for row in rows[1:]:
+        for row in rows:
             parts.append('| ' + ' | '.join((row + [''] * ncols)[:ncols]) + ' |')
         parts.append('')
 
