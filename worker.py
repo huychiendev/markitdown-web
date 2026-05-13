@@ -72,8 +72,7 @@ def convert_excel_with_formulas(job_id, job_dir, file_path):
                     f.write(blob)
                     
                 encoded_filename = urllib.parse.quote(save_name)
-                img_url = f"/static/conversions/{job_id}/{encoded_filename}"
-                md_img = f"![{save_name}]({img_url})"
+                md_img = f"![{save_name}]({encoded_filename})"
                 
                 if (row_idx, col_idx) not in images_by_cell:
                     images_by_cell[(row_idx, col_idx)] = []
@@ -187,8 +186,7 @@ def convert_file(job_id, job_dir, file_path, filename):
                         img_f.write(blob)
 
                     encoded_filename = urllib.parse.quote(save_name)
-                    img_url = f"/static/conversions/{job_id}/{encoded_filename}"
-                    markdown_text = markdown_text.replace(f"]({placeholder})", f"]({img_url})", 1)
+                    markdown_text = markdown_text.replace(f"]({placeholder})", f"]({encoded_filename})", 1)
         except Exception as e:
             print(f"Error extracting PPTX images: {e}")
 
@@ -214,6 +212,9 @@ def main():
             f.write(markdown_text)
 
         if not is_batch:
+            import shutil
+            zip_path = os.path.join(os.path.dirname(job_dir), f"{job_id}_archive")
+            shutil.make_archive(zip_path, 'zip', job_dir)
             with open(os.path.join(job_dir, "success.txt"), "w") as f:
                 f.write(md_filename)
 

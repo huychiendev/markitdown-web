@@ -213,7 +213,7 @@ def check_status(job_id: str):
             "success": True, "status": "completed",
             "markdown": markdown_text,
             "filename_md": md_filename,
-            "download_url": f"/static/conversions/{job_id}/{md_filename}"
+            "download_url": f"/static/conversions/{job_id}_archive.zip"
         }
 
     return {"success": True, "status": "processing"}

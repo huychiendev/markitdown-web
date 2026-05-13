@@ -183,6 +183,7 @@
 
         let currentMarkdown = '';
         let currentResults = [];
+        let currentJobId = '';
 
         // UI Toggles
         btnPreview.addEventListener('click', () => {
@@ -304,7 +305,12 @@
         function renderContent(markdown) {
             currentMarkdown = markdown;
             codeArea.value = currentMarkdown;
-            previewArea.innerHTML = marked.parse(currentMarkdown);
+            
+            let previewMarkdown = markdown;
+            if (currentJobId) {
+                previewMarkdown = markdown.replace(/\]\(([^/)]+\.(png|jpg|jpeg|gif))\)/gi, `](/static/conversions/${currentJobId}/$1)`);
+            }
+            previewArea.innerHTML = marked.parse(previewMarkdown);
         }
         
         function selectFile(index) {
@@ -366,8 +372,12 @@
                 }
                 
                 // POLLING LOGIC
-                if (data.status === 'processing' && data.job_id) {
-                    const jobId = data.job_id;
+                let jobId = data.job_id;
+                if (jobId) {
+                    currentJobId = jobId;
+                }
+                
+                if (data.status === 'processing' && jobId) {
                     while (true) {
                         await new Promise(r => setTimeout(r, 2000));
                         const pollRes = await fetch(`/api/status/${jobId}`);
@@ -428,7 +438,7 @@
                     btnDownload.classList.remove('pointer-events-none', 'opacity-50');
                     btnDownload.innerHTML = isBatch 
                         ? '<i data-lucide="folder-down" class="w-4 h-4 inline mr-1"></i> Download All (ZIP)'
-                        : '<i data-lucide="download" class="w-4 h-4 inline mr-1"></i> Download .md';
+                        : '<i data-lucide="download" class="w-4 h-4 inline mr-1"></i> Download (ZIP)';
                     lucide.createIcons();
 
                 } else {
