@@ -31,25 +31,78 @@ def _extract_vba_macros(file_path):
         return ""
 
 
-def convert_excel_with_formulas(file_path):
+def convert_excel_with_formulas(job_id, job_dir, file_path):
     from openpyxl import load_workbook
-    wb_data = load_workbook(file_path, data_only=True, read_only=True)
-    wb_formula = load_workbook(file_path, data_only=False, read_only=True)
+    wb_data = load_workbook(file_path, data_only=True, read_only=False)
+    wb_formula = load_workbook(file_path, data_only=False, read_only=False)
     parts = []
 
     for name in wb_formula.sheetnames:
         ws_d, ws_f = wb_data[name], wb_formula[name]
+        
+        images_by_cell = {}
+        img_counter = 0
+        max_img_row = -1
+        max_img_col = -1
+        
+        for image in getattr(ws_f, '_images', []):
+            try:
+                if not hasattr(image, 'anchor') or not hasattr(image.anchor, '_from'):
+                    continue
+                
+                row_idx = image.anchor._from.row
+                col_idx = image.anchor._from.col
+                
+                if row_idx > max_img_row: max_img_row = row_idx
+                if col_idx > max_img_col: max_img_col = col_idx
+                
+                img_counter += 1
+                ext = getattr(image, 'format', 'png') or 'png'
+                save_name = f"{name}_img_{img_counter}.{ext}"
+                save_name = re.sub(r"[^\w\.-]", "_", save_name)
+                img_path = os.path.join(job_dir, save_name)
+                
+                if callable(getattr(image, '_data', None)):
+                    blob = image._data()
+                else:
+                    blob = image._data
+                
+                with open(img_path, "wb") as f:
+                    f.write(blob)
+                    
+                encoded_filename = urllib.parse.quote(save_name)
+                img_url = f"/static/conversions/{job_id}/{encoded_filename}"
+                md_img = f"![{save_name}]({img_url})"
+                
+                if (row_idx, col_idx) not in images_by_cell:
+                    images_by_cell[(row_idx, col_idx)] = []
+                images_by_cell[(row_idx, col_idx)].append(md_img)
+            except Exception as e:
+                print(f"Error extracting image from Excel: {e}")
+                
+        actual_max_row = max(ws_d.max_row, max_img_row + 1)
+        actual_max_col = max(ws_d.max_column, max_img_col + 1)
+
         parts.append(f"## {name}\n")
         rows = []
-        for row_d, row_f in zip(ws_d.iter_rows(values_only=True), ws_f.iter_rows(values_only=False)):
+        for r_idx, (row_d, row_f) in enumerate(zip(
+            ws_d.iter_rows(max_row=actual_max_row, max_col=actual_max_col, values_only=True),
+            ws_f.iter_rows(max_row=actual_max_row, max_col=actual_max_col, values_only=False)
+        )):
             row_data = []
-            for val, cell_f in zip(row_d, row_f):
-                raw = cell_f.value
+            for c_idx, (val, cell_f) in enumerate(zip(row_d, row_f)):
+                raw = cell_f.value if cell_f else None
                 if isinstance(raw, str) and raw.startswith('='):
                     text = f"{val if val is not None else ''} (`{raw}`)"
                 else:
                     text = str(val) if val is not None else ''
-                row_data.append(_escape_cell(text))
+                    
+                imgs = images_by_cell.get((r_idx, c_idx), [])
+                if imgs:
+                    text = text + " " + " ".join(imgs) if text else " ".join(imgs)
+                    
+                row_data.append(_escape_cell(text.strip()))
+                
             if any(c.strip() != '' for c in row_data):
                 rows.append(row_data)
 
@@ -74,7 +127,7 @@ def convert_file(job_id, job_dir, file_path, filename):
     markdown_text = ""
 
     if filename.lower().endswith(('.xlsx', '.xlsm', '.xltx', '.xltm')):
-        markdown_text = convert_excel_with_formulas(file_path)
+        markdown_text = convert_excel_with_formulas(job_id, job_dir, file_path)
     else:
         # Only import MarkItDown here -- keeps main server process lean
         from markitdown import MarkItDown
